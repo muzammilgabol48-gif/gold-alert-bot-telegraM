@@ -22,7 +22,7 @@ import requests
 NEWS_QUERY = "gold price OR XAUUSD OR bullion"
 NEWS_PAGE_SIZE = 6
 STATE_FILE = "last_alert_state.json"
-GROQ_MODEL = "llama-3.3-70b-versatile"
+GROQ_MODEL = "openai/gpt-oss-120b"
 
 GROQ_API_KEY = os.environ["GROQ_API_KEY"]
 NEWS_API_KEY = os.environ["NEWS_API_KEY"]
