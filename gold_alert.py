@@ -70,7 +70,7 @@ Bias: <BULLISH/BEARISH/NEUTRAL>
 Reason: <short reason>
 """
 
-        resp = requests.post(
+    resp = requests.post(
         "https://api.groq.com/openai/v1/chat/completions",
         headers={
             "Authorization": f"Bearer {GROQ_API_KEY}",
@@ -89,6 +89,8 @@ Reason: <short reason>
     content = data["choices"][0]["message"].get("content") or ""
     content = content.strip()
     if not content:
+        # Fallback: some reasoning models leave the final answer empty
+        # under tight token budgets. Surface something useful instead of "".
         content = "Bias: UNKNOWN\nReason: AI response was empty this run, try again next cycle."
     return content
 
