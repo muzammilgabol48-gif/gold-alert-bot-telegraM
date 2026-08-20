@@ -3,7 +3,7 @@ name: XAUUSD Gold WhatsApp Alert
 on:
   schedule:
     # Runs every hour, at minute 5 (UTC time)
-    - cron: "5 * * * *"
+    - cron: "*/15 * * * *"
   workflow_dispatch: {}   # lets you also trigger it manually from the Actions tab
 
 permissions:
