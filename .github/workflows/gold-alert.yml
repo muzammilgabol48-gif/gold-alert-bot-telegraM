@@ -1,0 +1,41 @@
+name: XAUUSD Gold WhatsApp Alert
+
+on:
+  schedule:
+    # Runs every hour, at minute 5 (UTC time)
+    - cron: "5 * * * *"
+  workflow_dispatch: {}   # lets you also trigger it manually from the Actions tab
+
+permissions:
+  contents: write   # needed so the workflow can save the "last alert" state file
+
+jobs:
+  run-alert:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install requests
+
+      - name: Run gold alert script
+        env:
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          NEWS_API_KEY: ${{ secrets.NEWS_API_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python gold_alert.py
+
+      - name: Commit updated state file (so we don't resend the same alert)
+        run: |
+          git config --global user.name "gold-alert-bot"
+          git config --global user.email "bot@users.noreply.github.com"
+          git add last_alert_state.json || true
+          git diff --quiet --cached || git commit -m "Update last alert state"
+          git push || true
