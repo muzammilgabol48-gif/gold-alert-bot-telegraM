@@ -70,7 +70,7 @@ Bias: <BULLISH/BEARISH/NEUTRAL>
 Reason: <short reason>
 """
 
-    resp = requests.post(
+        resp = requests.post(
         "https://api.groq.com/openai/v1/chat/completions",
         headers={
             "Authorization": f"Bearer {GROQ_API_KEY}",
@@ -78,14 +78,19 @@ Reason: <short reason>
         },
         json={
             "model": GROQ_MODEL,
-            "max_tokens": 200,
+            "max_completion_tokens": 600,
+            "reasoning_effort": "low",
             "messages": [{"role": "user", "content": prompt}],
         },
         timeout=30,
     )
     resp.raise_for_status()
     data = resp.json()
-    return data["choices"][0]["message"]["content"].strip()
+    content = data["choices"][0]["message"].get("content") or ""
+    content = content.strip()
+    if not content:
+        content = "Bias: UNKNOWN\nReason: AI response was empty this run, try again next cycle."
+    return content
 
 
 def send_telegram(message):
