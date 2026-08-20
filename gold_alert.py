@@ -1,14 +1,14 @@
 """
 XAUUSD (Gold) News -> AI Analysis -> Telegram Alert
 -----------------------------------------------------
-1. Fetches latest gold/XAUUSD news headlines (NewsAPI.org)
-2. Sends headlines to Groq (free AI API, Llama model) to judge Bullish / Bearish + reason
+1. Fetches latest USD economic calendar events (JBlanked API, sourced from Forex Factory)
+2. Sends events to Groq (free AI API) to judge Bullish / Bearish + reason for XAUUSD
 3. Sends the result to your Telegram via a Telegram Bot (official, free)
 4. Avoids sending duplicate alerts using a small local state file
 
 Required environment variables (set as GitHub Secrets - see README.md):
     GROQ_API_KEY         - your free Groq API key (console.groq.com, no card needed)
-    NEWS_API_KEY         - your NewsAPI.org key (free tier)
+    JBLANKED_API_KEY      - your free JBlanked API key (jblanked.com/profile)
     TELEGRAM_BOT_TOKEN   - token you got from @BotFather
     TELEGRAM_CHAT_ID     - your personal chat id (see README.md)
 """
@@ -19,50 +19,66 @@ import hashlib
 import requests
 
 # ---------- CONFIG ----------
-NEWS_QUERY = "gold price OR XAUUSD OR bullion"
-NEWS_PAGE_SIZE = 6
 STATE_FILE = "last_alert_state.json"
 GROQ_MODEL = "openai/gpt-oss-120b"
+RELEVANT_CURRENCIES = {"USD"}  # gold (XAUUSD) mainly reacts to USD data
+HIGH_IMPACT_ONLY = True
+HIGH_IMPACT_LABELS = {"HIGH", "STRONG", "3"}  # covers different label styles the API may use
 
 GROQ_API_KEY = os.environ["GROQ_API_KEY"]
-NEWS_API_KEY = os.environ["NEWS_API_KEY"]
+JBLANKED_API_KEY = os.environ["JBLANKED_API_KEY"]
 TELEGRAM_BOT_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
 TELEGRAM_CHAT_ID = os.environ["TELEGRAM_CHAT_ID"]
 
 
 def fetch_gold_news():
-    """Fetch recent gold-related headlines from NewsAPI.org"""
-    url = "https://newsapi.org/v2/everything"
-    params = {
-        "q": NEWS_QUERY,
-        "language": "en",
-        "sortBy": "publishedAt",
-        "pageSize": NEWS_PAGE_SIZE,
-        "apiKey": NEWS_API_KEY,
+    """Fetch today's USD economic calendar events from Forex Factory via JBlanked API"""
+    url = "https://www.jblanked.com/news/api/forex-factory/calendar/today/"
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Api-Key {JBLANKED_API_KEY}",
     }
-    resp = requests.get(url, params=params, timeout=20)
+    resp = requests.get(url, headers=headers, timeout=20)
     resp.raise_for_status()
-    articles = resp.json().get("articles", [])
+    events = resp.json()
+    if isinstance(events, dict):
+        events = events.get("results") or events.get("data") or []
+
     headlines = []
-    for a in articles:
-        title = a.get("title") or ""
-        desc = a.get("description") or ""
-        source = (a.get("source") or {}).get("name", "")
-        if title:
-            headlines.append(f"- [{source}] {title}. {desc}".strip())
+    for e in events:
+        currency = (e.get("currency") or e.get("Currency") or "").upper()
+        if RELEVANT_CURRENCIES and currency not in RELEVANT_CURRENCIES:
+            continue
+
+        strength = e.get("strength") or e.get("Strength") or ""
+        if HIGH_IMPACT_ONLY:
+            strength_label = str(strength).strip().upper()
+            if strength_label not in HIGH_IMPACT_LABELS:
+                continue
+
+        name = e.get("name") or e.get("Name") or e.get("event") or "Event"
+        actual = e.get("actual") or e.get("Actual") or "N/A"
+        forecast = e.get("forecast") or e.get("Forecast") or "N/A"
+        previous = e.get("previous") or e.get("Previous") or "N/A"
+        headlines.append(
+            f"- [{currency}] {name}: actual={actual}, forecast={forecast}, "
+            f"previous={previous} {('impact=' + str(strength)) if strength else ''}".strip()
+        )
     return headlines
 
 
-def analyze_with_ai(headlines):
-    """Ask Groq's free Llama model whether the news is bullish or bearish for XAUUSD"""
-    news_text = "\n".join(headlines) if headlines else "No fresh headlines found."
+def analyze_with_ai(events):
+    """Ask Groq's free AI model whether the economic data is bullish or bearish for XAUUSD"""
+    news_text = "\n".join(events) if events else "No fresh USD economic events found."
 
-    prompt = f"""You are a concise financial news analyst. Below are the latest gold/XAUUSD-related
-news headlines. Decide whether the overall tone is BULLISH, BEARISH, or NEUTRAL for XAUUSD
-(gold spot price), and give ONE short reason (max 2 sentences). This is for a personal WhatsApp
+    prompt = f"""You are a concise financial news analyst. Below are today's latest USD economic
+calendar events (from Forex Factory) that move gold (XAUUSD) prices. Decide whether the overall
+tone is BULLISH, BEARISH, or NEUTRAL for XAUUSD (gold spot price), and give ONE short reason
+(max 2 sentences). Remember: strong USD data (beats forecast) is usually BEARISH for gold, and
+weak USD data (misses forecast) is usually BULLISH for gold. This is for a personal Telegram
 alert, so keep the whole reply under 60 words, plain text, no markdown, no disclaimers.
 
-Headlines:
+Events:
 {news_text}
 
 Reply in exactly this format:
@@ -89,8 +105,6 @@ Reason: <short reason>
     content = data["choices"][0]["message"].get("content") or ""
     content = content.strip()
     if not content:
-        # Fallback: some reasoning models leave the final answer empty
-        # under tight token budgets. Surface something useful instead of "".
         content = "Bias: UNKNOWN\nReason: AI response was empty this run, try again next cycle."
     return content
 
@@ -123,22 +137,21 @@ def save_last_hash(h):
 
 
 def main():
-    headlines = fetch_gold_news()
-    if not headlines:
-        print("No headlines fetched, skipping.")
+    events = fetch_gold_news()
+    if not events:
+        print("No relevant USD events found right now, skipping.")
         return
 
-    # Avoid re-sending the exact same set of headlines
-    combined = "\n".join(headlines)
+    combined = "\n".join(events)
     current_hash = hashlib.sha256(combined.encode()).hexdigest()
     last_hash = load_last_hash()
 
     if current_hash == last_hash:
-        print("No new headlines since last run, skipping alert.")
+        print("No new events since last run, skipping alert.")
         return
 
-    analysis = analyze_with_ai(headlines)
-    message = f"XAUUSD Gold Alert\n\n{analysis}\n\nTop headline: {headlines[0][:180]}"
+    analysis = analyze_with_ai(events)
+    message = f"XAUUSD Gold Alert\n\n{analysis}\n\nLatest event: {events[0][:180]}"
 
     result = send_telegram(message)
     print("Telegram send result:", result)
